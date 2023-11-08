@@ -1,0 +1,180 @@
+---
+title: "rsibal_OriginalHomeworkCode_05"
+author: "Ritika"
+date: "`r Sys.Date()`"
+output: 
+  prettydoc::html_pretty:
+    theme: cayman
+    toc: true
+    number_sections: true
+---
+# Homework
+## When we initially discussed the central limit theorem and confidence intervals, we showed how we could use bootstrapping to estimate standard errors and confidence intervals around certain parameter values, like the mean. Using bootstrapping, we could also do the same for estimating standard errors and CIs around regression parameters, such as β coefficients.
+
+## Using the “KamilarAndCooperData.csv” dataset, run a linear regression looking at log(HomeRange_km2) in relation to log(Body_mass_female_mean) and report your β coeffiecients (slope and intercept).
+``` {r HW1.1}
+library(curl)
+f <- curl("https://raw.githubusercontent.com/fuzzyatelin/fuzzyatelin.github.io/master/AN588_Fall23/KamilarAndCooperData.csv")
+kandc_data <- read.csv(f, header = TRUE, sep = ",", stringsAsFactors = FALSE)
+regression_line <- lm(formula = log(HomeRange_km2) ~ log(Body_mass_female_mean), data = kandc_data)
+cat("slope=", regression_line[["coefficients"]][["log(Body_mass_female_mean)"]], "\n")
+cat("intercept=",regression_line[["coefficients"]][["(Intercept)"]])
+```
+
+## Then, use bootstrapping to sample from your data 1000 times with replacement, each time fitting the same model and calculating the same coefficients. This generates a sampling distribution for each β coefficient.
+``` {r HW1.2}
+library(dplyr)
+
+slope_vector<-c()
+intercept_vector<-c()
+
+for (x in 1:1000){
+  sample_kandc <- slice_sample(kandc_data, n = 30, replace = TRUE)
+  regression_line_temp <- lm(formula = log(HomeRange_km2) ~ log(Body_mass_female_mean), data = sample_kandc)
+  slope_vector <- c(slope_vector, regression_line_temp[["coefficients"]][["log(Body_mass_female_mean)"]]) 
+  intercept_vector <- c(intercept_vector, regression_line_temp[["coefficients"]][["(Intercept)"]])
+}
+```
+
+## Estimate the standard error for each of your β coefficients as the standard deviation of the sampling distribution from your bootstrap and determine the 95% CI for each of your β coefficients based on the appropriate quantiles from your sampling distribution.
+``` {r HW1.3}
+# https://mgimond.github.io/Stats-in-R/CI.html
+
+slope_mean <- mean(slope_vector)
+slope_sd <- sd(slope_vector)
+slope_ci <- slope_mean + qt( c(0.05, 0.95), length(slope_vector) - 1) * slope_sd
+(list(slope_mean=slope_mean, slope_sd=slope_sd, slope_ci=slope_ci))
+
+intercept_mean <- mean(intercept_vector)
+intercept_sd <- sd(intercept_vector)
+intercept_ci <- intercept_mean + qt( c(0.05, 0.95), length(intercept_vector) - 1) * intercept_sd
+(list(intercept_mean=intercept_mean, intercept_sd=intercept_sd, intercept_ci=intercept_ci))
+```
+
+## How does the former compare to the SE estimated from your entire dataset using the formula for standard error implemented in lm()?
+``` {r HW1.4}
+summary(regression_line)
+```
+
+The standard error values estimated from lm() generally seem to much lower than what we computed in the previous section
+
+## How does the latter compare to the 95% CI estimated from your entire dataset?
+``` {r HW1.5}
+(confint(regression_line, level = 0.95))
+```
+
+Again, the confidence intervals calculated using lm() seem to be tighter for the Intercept coefficient when compared to our calculations from the bootstrapping method. However, the slope coefficient confidence interval seems to tighter in our bootstrapping method. 
+
+
+# EXTRA CREDIT
+## Write a FUNCTION that takes as its arguments a dataframe, “d”, a linear model, “m” (as a character string, e.g., “logHR~logBM”), a user-defined confidence interval level, “conf.level” (with default = 0.95), and a number of bootstrap replicates, “n” (with default = 1000). Your function should return a dataframe that includes: beta coefficient names; beta coefficients, standard errors, and upper and lower CI limits for the linear model based on your entire dataset; and mean beta coefficient estimates, SEs, and CI limits for those coefficients based on your bootstrap.
+``` {r Extra1}
+library(dplyr)
+
+bootstrapping_vs_lm <- function(d, m, n=1000, conf.level=0.95){
+
+# Split the string
+y<-strsplit(m, split="~")[[1]][1]
+x<-strsplit(m, split="~")[[1]][2]
+
+# Bootstrapping Method
+slope_vector<-c()
+intercept_vector<-c()
+
+for (x in 1:n){
+  sample_data <- slice_sample(d, n = 30, replace = TRUE)
+  regression_line_temp <- lm(formula = m, data = sample_data)
+  slope_vector <- c(slope_vector, regression_line_temp[["coefficients"]][[2]])
+  intercept_vector <- c(intercept_vector, regression_line_temp[["coefficients"]][["(Intercept)"]])
+}
+
+slope_mean <- mean(slope_vector)
+slope_sd <- sd(slope_vector)
+slope_ci <- slope_mean + qt( c(1-conf.level, conf.level), length(slope_vector) - 1) * slope_sd
+
+intercept_mean <- mean(intercept_vector)
+intercept_sd <- sd(intercept_vector)
+intercept_ci <- intercept_mean + qt( c(1-conf.level, conf.level), length(intercept_vector) - 1) * intercept_sd
+
+# Linear Model Method
+regression_line <- lm(formula = m, data = d)
+
+lm_slope_coefficent <- regression_line_temp[["coefficients"]][[2]]
+lm_intercept_coefficent <- regression_line_temp[["coefficients"]][[1]]
+
+temp_ci<-(confint(regression_line, level = 0.95))
+lm_slope_ci <- c(temp_ci@.Data[2], temp_ci@.Data[4])
+lm_intercept_ci <- c(temp_ci@.Data[1], temp_ci@.Data[3])
+
+# From here: https://www.statology.org/extract-standard-error-from-lm-in-r/
+lm_slope_SE=sqrt(diag(vcov(regression_line)))[2]
+lm_intercept_SE=sqrt(diag(vcov(regression_line)))[1]
+
+summary <- list(lm_slope_coefficent=lm_slope_coefficent,
+                  lm_intercept_coefficent=lm_intercept_coefficent,
+                  lm_slope_SE=lm_slope_SE,
+                  lm_slope_ci=lm_slope_ci,
+                  lm_intercept_SE=lm_intercept_SE,
+                  lm_intercept_ci=lm_intercept_ci,
+                  boot_slope_mean=slope_mean,
+                  boot_slope_SE=slope_sd,
+                  boot_slope_ci=slope_ci,
+                  boot_intercept_mean=intercept_mean,
+                  boot_intercept_SE=intercept_sd,
+                  boot_intercept_ci=intercept_ci)
+return(summary)
+
+}
+```
+
+Now we check if our function works! 
+
+```{r Extra1_check function}
+bootstrapping_vs_lm(kandc_data, 'log(HomeRange_km2)~log(Body_mass_female_mean)')
+```
+
+# EXTRA EXTRA CREDIT
+## Graph each beta value from the linear model and its corresponding mean value, lower CI and upper CI from a bootstrap as a function of number of bootstraps from 10 to 200 by 10s. HINT: the beta value from the linear model will be the same for all bootstraps and the mean beta value may not differ that much!
+``` {r ExtraExtra1}
+n <- seq(10, 200, 10)
+
+lm_slope_coefficent <- c()
+boot_slope_mean <- c()
+boot_slope_SE <- c()
+boot_slope_ci_upper <- c()
+boot_slope_ci_lower <- c()
+
+lm_intercept_coefficent <-c()
+boot_intercept_mean <- c()
+boot_intercept_SE <- c()
+boot_intercept_ci_upper <- c()
+boot_intercept_ci_lower <- c()
+
+for (x in n){
+  data<-bootstrapping_vs_lm(kandc_data, 'log(HomeRange_km2)~log(Body_mass_female_mean)', n=x)
+  lm_slope_coefficent <- c(lm_slope_coefficent, data$lm_slope_coefficent)
+  boot_slope_mean <- c(boot_slope_mean, data$boot_slope_mean)
+  boot_slope_SE <- c(boot_slope_SE, data$boot_slope_SE)
+  boot_slope_ci_upper <- c(boot_slope_ci_upper, data$boot_slope_ci[2])
+  boot_slope_ci_lower <- c(boot_slope_ci_lower, data$boot_slope_ci[1])
+
+  lm_intercept_coefficent <- c(lm_intercept_coefficent, data$lm_intercept_coefficent)
+  boot_intercept_mean <- c(boot_intercept_mean, data$boot_intercept_mean)
+  boot_intercept_SE <- c(boot_intercept_SE, data$boot_intercept_SE)
+  boot_intercept_ci_upper <- c(boot_intercept_ci_upper, data$boot_intercept_ci[1])
+  boot_intercept_ci_lower <- c(boot_intercept_ci_lower, data$boot_intercept_ci[2])
+}
+
+
+plot(n, lm_slope_coefficent, xlab="number of bootstraps")
+plot(n, boot_slope_mean, xlab="number of bootstraps")
+plot(n, boot_slope_SE, xlab="number of bootstraps")
+plot(n, boot_slope_ci_upper, xlab="number of bootstraps")
+plot(n, boot_slope_ci_lower, xlab="number of bootstraps")
+
+plot(n, lm_intercept_coefficent, xlab="number of bootstraps")
+plot(n, boot_intercept_mean, xlab="number of bootstraps")
+plot(n, boot_intercept_SE, xlab="number of bootstraps")
+plot(n, boot_intercept_ci_upper, xlab="number of bootstraps")
+plot(n, boot_intercept_ci_lower, xlab="number of bootstraps")
+```
